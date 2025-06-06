@@ -26,3 +26,11 @@ def prepare_workspace(dut: str, base_log_dir: str = "logs"):
     time.sleep(1)
     wifi_on(dut, user="root")
     logger.info(f"Finished remote cleanup for {dut}")
+
+def countdown(seconds: int):
+    """Print a dark-orange countdown for long sleeps or traffic durations."""
+    from colored_print import print_step
+    for rem in range(seconds, 0, -1):
+        print_step(f"{rem} seconds remaining…")
+        time.sleep(1)
+    print_step("Done.")
