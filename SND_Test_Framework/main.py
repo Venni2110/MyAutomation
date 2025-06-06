@@ -14,7 +14,7 @@ from utils.excel_loader import (
     load_sniffer_parameters,
     load_test_config
 )
-from utils import common_utils, ssh_utils, sniffer_utils, tcpdump_utils, sysdiag_utils, attenuator_utils
+from utils import common_utils, attenuator_utils, sniffer_utils, tcpdump_utils, sysdiag_utils, wlan_utils
 
 def per_dut_worker(
     dut: str,
@@ -25,6 +25,8 @@ def per_dut_worker(
     sniffer_params: dict,
     barrier: threading.Barrier
 ):
+    print_step(f"Preparing workspace for DUT: {dut}")
+    logger.info(f"Workspace will be created at {dut_root}")
     logger = logging.getLogger(f"Worker.{test_params['Test_Type']}.{dut}")
     test_name     = test_params["Test_Type"]
     traffic_type  = test_params["TrafficType"]
@@ -32,6 +34,7 @@ def per_dut_worker(
     base_log_folder = global_flags.get("test_log_folder", "logs")
 
     # 1) Prepare workspace directories
+    print_step(f"📁 [{dut}] Creating log folders")
     dut_root       = os.path.join(base_log_folder, test_name, dut.replace(".", "_"))
     dut_sniffer_dir = os.path.join(dut_root, "sniffer")
     dut_tcpdump_dir = os.path.join(dut_root, "tcpdump")
@@ -50,30 +53,33 @@ def per_dut_worker(
     logger.info(f"Workspace created at {dut_root}")
 
     # 1.1) Remote cleanup on DUT
+    print_step(f"🧼 [{dut}] Cleaning DUT")
+    logger.info(f"[{dut}] Workspace created at {dut_root}
     common_utils.erase_logs(dut, user)
     common_utils.clear_saved_networks(dut, user)
     common_utils.cleanup_scan_cache(dut, user)
     common_utils.wifi_off(dut, user)
     import time; time.sleep(1)
     common_utils.wifi_on(dut, user)
-    logger.info("DUT cleanup done.")
+    logger.info(f"[{dut}] DUT cleanup complete.")
 
     # -------------------------------------------------------------------------
     # 2) START “always-on” logging
     # -------------------------------------------------------------------------
     # 2.1) Attenuator
+    print_step(f"📡 [{dut}] Starting logs (Attenuator, Sniffer, tcpdump)")
     try:
         if global_flags.get("enable_attenuator", False):
             start_attn = int(test_params.get("start_attn_1", 0))
             attenuator_utils.set_attenuation(start_attn)
             attn_was_set = True
-            logger.info(f"Attenuator set to {start_attn} dB (start).")
+            logger.info(f"[{dut}] Attenuator set to {start_attn} dB.")
         else:
             attn_was_set = False
-            logger.info("Skipping attenuator (global flag).")
+            logger.info(f"[{dut}] Skipping attenuator.")
     except Exception as e:
         attn_was_set = False
-        logger.error(f"Attenuator setup exception: {e}", exc_info=True)
+        logger.error(f"[{dut}] Attenuator exception: {e}", exc_info=True)
 
     # 2.2) Sniffer(s)
     raw_ch_str = test_params.get("sniffer_channels", "")
@@ -88,35 +94,35 @@ def per_dut_worker(
                     sn_info["ip"], sn_info["user"], sn_info["ifname"], freq_info, dut_sniffer_dir
                 )
                 sniffer_processes.append((sn_info, pid_file))
-                logger.info(f"Started sniffer '{sn_info['name']}' on channel {ch}")
+                logger.info(f"[{dut}] Started sniffer '{sn_info['name']}' on channel {ch}")
             else:
-                logger.error(f"No free sniffer device for channel {ch}")
+                logger.error(f"[{dut}] No sniffer available for channel {ch}")
     else:
-        logger.info("Skipping sniffer (global flag or no channels).")
+        logger.info(f"[{dut}] Skipping sniffer.")
 
     # 2.3) TCPDUMP on DUT
     if global_flags.get("enable_tcpdump", False):
         iface = test_params.get("dut_wifi_interface", "wlan0")
         tcpdump_handle = tcpdump_utils.start_tcpdump(dut, user, iface, dut_tcpdump_dir)
-        logger.info("Started tcpdump on DUT.")
+        logger.info(f"[{dut}] Started tcpdump.")
     else:
         tcpdump_handle = None
-        logger.info("Skipping tcpdump (global flag).")
+        logger.info(f"[{dut}] Skipping tcpdump.")
 
     # 2.4) Initial sysdiag/logarchive
     sys_mode = str(global_flags.get("get_sysdiagnose", "")).lower()
     if sys_mode == "sysdiagnose":
         try:
             sysdiag_utils.run_sysdiagnose(dut, user, dut_sysdiag_dir)
-            logger.info("Ran initial sysdiagnose.")
+            logger.info(f"[{dut}] Ran initial sysdiagnose.")
         except Exception as e:
-            logger.error(f"Initial sysdiagnose exception: {e}", exc_info=True)
+            logger.error(f"[{dut}] Initial sysdiagnose exception: {e}", exc_info=True)
     elif sys_mode == "logarchive":
         try:
             sysdiag_utils.run_logarchive(dut, user, dut_sysdiag_dir)
-            logger.info("Ran initial logarchive.")
+            logger.info("[{dut}] Ran initial logarchive.")
         except Exception as e:
-            logger.error(f"Initial logarchive exception: {e}", exc_info=True)
+            logger.error(f"[{dut}] Initial logarchive exception: {e}", exc_info=True)
     else:
         logger.info("Skipping initial sysdiag/logarchive (global flag).")
 
@@ -128,13 +134,14 @@ def per_dut_worker(
         )
         if rc == 0:
             remote_handles.append(("iperf3", remote_list[0]))
-            logger.info(f"Started iperf3 server on remote {remote_list[0]}")
+            logger.info(f"[{dut}] Started iperf3 server on remote {remote_list[0]}")
         else:
-            logger.error(f"Failed to start iperf3 on remote {remote_list[0]}: {err}")
+            logger.error(f"[{dut}] Failed to start iperf3 on remote {remote_list[0]}: {err}")
 
     # --------------------------------------------------------------
     # 3) TEST LOGIC (try/except so finally always runs)
     # --------------------------------------------------------------
+    print_step(f"🚀 [{dut}] Running test logic: {traffic_type}")
     test_exception = None
     try:
         # A) JOIN
@@ -175,6 +182,7 @@ def per_dut_worker(
     # 4) FINALLY → STOP & COLLECT LOGS, RESET HARDWARE
     # --------------------------------------------------------------
     # 4.1) Stop tcpdump on DUT
+    print_step(f"🧹 [{dut}] Collecting logs and cleaning up")
     if tcpdump_handle:
         try:
             tcpdump_utils.stop_tcpdump(dut, user, tcpdump_handle)
@@ -225,14 +233,16 @@ def per_dut_worker(
     try:
         tar_path = f"{dut_root}.tar.gz"
         subprocess.call(f"tar czf {tar_path} -C {base_log_folder} {test_name}/{dut.replace('.', '_')}", shell=True)
-        logger.info(f"Archived logs to {tar_path}")
+        logger.info(f"[{dut}] Archived logs to {tar_path}")
     except Exception as e:
-        logger.error(f"Exception archiving logs: {e}", exc_info=True)
+        logger.error(f"[{dut}] Exception archiving logs: {e}", exc_info=True)
 
     if test_exception:
-        logger.error(f"Test FAILED with exception: {test_exception}")
+        logger.error(f"[{dut}] ❌ Test FAILED.")
+        print_step(f"[{dut}] ❌ Test FAILED.")
     else:
-        logger.info("Test completed SUCCESSFULLY.")
+        logger.info(f"[{dut}] ✅ Test SUCCESSFUL.")
+        print_step(f"[{dut}] ✅ Test SUCCESSFUL.")
 
 def main():
     # 1) Parse CLI
