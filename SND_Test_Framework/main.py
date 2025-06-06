@@ -7,7 +7,7 @@ import subprocess
 import pandas as pd
 
 from logger_config import setup_logging
-from colored_print import print_info, print_error
+from colored_print import print_info, print_error, print_step
 from utils.excel_loader import (
     load_execution_config,
     load_sniffer_config,
@@ -236,6 +236,9 @@ def per_dut_worker(
 
 def main():
     # 1) Parse CLI
+    print_step("Parsing command-line arguments...")
+    logger = setup_logging(log_file="testExecOutput.log", level=logging.INFO)
+    logger.info("Started InfraFramework CLI parsing")
     parser = argparse.ArgumentParser()
     parser.add_argument("--excel_path", "-e", required=True, help="Path to Configurations_updated.xlsx")
     parser.add_argument("--tests_to_run", "-t", nargs="*", default=None,
@@ -243,34 +246,46 @@ def main():
     args = parser.parse_args()
 
     # 2) Initialize logging
-    logger = setup_logging(log_file="testExecOutput.log", level=logging.INFO)
-    print_info("InfraFramework starting…")
+    print_info("InfraFramework starting...")
+    logger.info("Logger initialized and output redirected to testExecOutput.log")
 
     # 3) Load all Excel sheets
+    print_step("Loading execution configuration and test definitions from Excel...")
+    logger.info("Loading Execution_Config, Sniffer_Config, Sniffer_Paramters, and Test_Config from %s", args.excel_path)
     global_flags     = load_execution_config(args.excel_path)
     sniffer_devs     = load_sniffer_config(args.excel_path)
     sniffer_params   = load_sniffer_parameters(args.excel_path)
     test_df          = load_test_config(args.excel_path)
+    logger.info("Excel configuration loaded successfully")
 
-    # 4) Filter out “Skipped_Execution == Skip”
+    # 4) Filter out Skipped_Execution == Skip
+    print_step("Filtering out tests marked as 'Skip'...")
     to_run_df = test_df[test_df["Skipped_Execution"].str.strip().str.lower() != "skip"]
     if args.tests_to_run:
         to_run_df = to_run_df[to_run_df["Test_Type"].isin(args.tests_to_run)]
+        logger.info("Filtered test list based on command-line --tests_to_run argument")
+    else:
+        logger.info("Running all unskipped tests from Excel")
+
     if to_run_df.empty:
         print_error("No tests to run.")
+        logger.error("Test plan is empty after filtering – exiting.")
         sys.exit(1)
 
-    # 5) For each test‐row, for each DUT, spawn a thread
+    # 5) Spawn a thread per DUT
+    print_step("Starting DUT threads for each test...")
     all_threads = []
     for _, row in to_run_df.iterrows():
         raw_dut_str = row["dut"]
         dut_list = [d.strip() for d in str(raw_dut_str).split(",") if d.strip()]
+        logger.info("Starting test: %s on DUT(s): %s", row["Test_Type"], ", ".join(dut_list))
 
         remote_list = []
         if "controller_ip" in row and pd.notna(row["controller_ip"]):
             remote_list = [r.strip() for r in str(row["controller_ip"]).split(",") if r.strip()]
+            logger.info("Remote devices found for this test: %s", ", ".join(remote_list))
 
-        # Create a barrier for this group of DUTs
+        # Barrier to synchronize parallel DUTs
         barrier = threading.Barrier(len(dut_list) if dut_list else 1)
 
         for dut in dut_list:
@@ -280,12 +295,15 @@ def main():
             )
             t.start()
             all_threads.append(t)
+            logger.info("Launched thread for DUT %s", dut)
 
     # 6) Wait for all threads
+    print_step("Waiting for all DUTs threads to complete...")
     for t in all_threads:
         t.join()
 
-    print_info("All DUT threads completed. Check testExecOutput.log.")
+    print_info("All DUT threads completed. Check testExecOutput.log file.")
+    logger.info("All test threads finished execution.")
 
 if __name__ == "__main__":
     main()
