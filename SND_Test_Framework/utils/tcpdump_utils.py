@@ -2,7 +2,7 @@ import logging
 import subprocess
 import time
 import os
-from .ssh_utils import ssh_execute
+from .common_utils import ssh_execute, get_timestamp
 
 logger = logging.getLogger("utils.tcpdump_utils")
 
