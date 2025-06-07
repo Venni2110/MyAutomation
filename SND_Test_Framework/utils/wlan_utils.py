@@ -6,8 +6,31 @@ from .common_utils import ssh_execute, get_timestamp
 
 logger = logging.getLogger("utils.wlan_utils")
 
+def wifi_off(dut: str, user: str = "root", for_debug: bool = False):
+    """
+    Turns Wi-Fi off on the DUT.
+    """
+    logger.info(f"[{dut}] Turning Wi-Fi OFF")
+    cmd = "mobilewifitool manager power 0"
+    rc, out, err = ssh_execute(dut, user, cmd)
+    if rc != 0:
+        logger.error(f"[{dut}] Wi-Fi OFF failed: {err}")
+    else:
+        logger.info(f"[{dut}] Wi-Fi is now OFF")
 
-def suppress_scan(dut: str, user: str, for_debug: bool = False):
+def wifi_on(dut: str, user: str = "root", for_debug: bool = False):
+    """
+    Turns Wi-Fi on on the DUT.
+    """
+    logger.info(f"[{dut}] Turning Wi-Fi ON")
+    cmd = "mobilewifitool manager power 1"
+    rc, out, err = ssh_execute(dut, user, cmd)
+    if rc != 0:
+        logger.error(f"[{dut}] Wi-Fi ON failed: {err}")
+    else:
+        logger.info(f"[{dut}] Wi-Fi is now ON")
+
+def suppress_scan(dut: str, user: str = "root", for_debug: bool = False):
     """
     Tells the DUT to suppress any active scans:
       apple80211 -dbg=scansuppress=1
@@ -18,7 +41,7 @@ def suppress_scan(dut: str, user: str, for_debug: bool = False):
     return ssh_execute(dut, user, cmd, local_log_dir="logs")
 
 
-def initiate_scan(dut: str, user: str, for_debug: bool = False):
+def initiate_scan(dut: str, user: str = "root", for_debug: bool = False):
     """
     Instructs the DUT to perform an on-demand Wi-Fi scan via `wifiutil`.
     Sleeps 1 second afterward to let results populate.
@@ -31,7 +54,7 @@ def initiate_scan(dut: str, user: str, for_debug: bool = False):
 
 def initiate_connect(
     dut: str,
-    user: str,
+    user: str = "root",
     dut_wifi_interface: str,
     ap_wifi_ssid: str = "",
     ap_wifi_pwd: str = "",
@@ -56,7 +79,7 @@ def initiate_connect(
 
 def initiate_assoc_connect(
     dut: str,
-    user: str,
+    user: str = "root",
     ap_wifi_ssid: str,
     ap_wifi_sec: str,
     ap_wifi_pwd: str = "",
@@ -79,7 +102,7 @@ def initiate_assoc_connect(
     return ssh_execute(dut, user, cmd, local_log_dir="logs")
 
 
-def initiate_forgetNw(dut: str, user: str, for_debug: bool = False):
+def initiate_forgetNw(dut: str, user: str = "root", for_debug: bool = False):
     """
     Uses 'wifiutil remove_all_known_networks' to clear every stored SSID
     from the DUT’s memory. Sleeps 1 second afterward.
@@ -90,7 +113,7 @@ def initiate_forgetNw(dut: str, user: str, for_debug: bool = False):
     return ssh_execute(dut, user, cmd, local_log_dir="logs")
 
 
-def scan(dut: str, user: str, interface: str = "wlan0"):
+def scan(dut: str, user: str = "root", interface: str = "wlan0"):
     """
     Alternate Linux-based scan.
     """
@@ -100,7 +123,7 @@ def scan(dut: str, user: str, interface: str = "wlan0"):
 
 def associate(
     dut: str,
-    user: str,
+    user: str = "root",
     ssid: str,
     password: str,
     interface: str = "wlan0"
@@ -114,7 +137,7 @@ def associate(
 
 def roam_profile(
     dut: str,
-    user: str,
+    user: str = "root",
     ssid_from: str,
     pwd_from: str,
     ssid_to: str,
@@ -130,7 +153,7 @@ def roam_profile(
     return ssh_execute(dut, user, cmd, local_log_dir="logs")
 
 
-def get_country_code(dut: str, user: str, interface: str = "wlan0") -> str:
+def get_country_code(dut: str, user: str = "root", interface: str = "wlan0") -> str:
     """
     Returns current regulatory domain.
     """
@@ -143,7 +166,7 @@ def get_country_code(dut: str, user: str, interface: str = "wlan0") -> str:
         return ""
 
 
-def get_mlo_status(dut: str, user: str, interface: str = "wlan0") -> str:
+def get_mlo_status(dut: str, user: str = "root", interface: str = "wlan0") -> str:
     """
     Returns MLO-related status via apple80211.
     """
@@ -158,41 +181,47 @@ def get_mlo_status(dut: str, user: str, interface: str = "wlan0") -> str:
 
 def start_wlan_status_loop(
     dut: str,
-    user: str,
-    duration_s: int,
+    user: str = "root",
     iteration_log_path: str,
-    host_timestamp_mac_cmd: str,
-    host_timestamp_cmd: str,
+    duration_s: int = 30,
     for_debug: bool = False
 ) -> int:
     """
-    Starts a background loop collecting wlan_status.txt and returns PID.
+    Starts a background SSH loop on the DUT that collects wlan_status and returns the remote PID.
     """
+
     loop_count = duration_s + 2
-    apple_loop = (
-        f"for i in {{0..{loop_count}}}; "
-        "(apple80211 -cca -ssid -rssi --noise -channel -bssid -dbg='mlo_status'; echo); "
-        "sleep 0.92; done"
+
+    # This is the full remote shell command to run via SSH
+    remote_cmd = (
+        f'for i in {{0..{loop_count}}}; '
+        f'do /System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport '
+        f'-I; echo; sleep 0.92; done > {iteration_log_path}/wlan_status.txt & echo $!'
     )
-    full_cmd = (
-        f""{apple_loop}" {host_timestamp_mac_cmd} {host_timestamp_cmd} "
-        f"> {iteration_log_path}/wlan_status.txt & echo $!"
-    )
-    ssh_cmd = f"ssh {user}@{dut} {full_cmd}"
+
+    # Construct SSH command
+    ssh_cmd = f"ssh {user}@{dut} '{remote_cmd}'"
+
     if for_debug:
         print(f"[DEBUG] start_wlan_status_loop on {dut}: {ssh_cmd}")
-    proc = subprocess.Popen(ssh_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, universal_newlines=True)
-    out, err = proc.communicate(timeout=10)
-    if proc.returncode == 0:
-        pid = int(out.strip().splitlines()[-1])
-        logger.info(f"Started wlan_status loop on {dut} (PID={pid})")
-        return pid
-    else:
-        logger.error(f"Failed to launch wlan_status loop on {dut}: {err}")
+
+    try:
+        proc = subprocess.Popen(ssh_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, universal_newlines=True)
+        out, err = proc.communicate(timeout=10)
+
+        if proc.returncode == 0:
+            pid = int(out.strip().splitlines()[-1])
+            logger.info(f"Started wlan_status loop on {dut} (PID={pid})")
+            return pid
+        else:
+            logger.error(f"[{dut}] Failed to start wlan_status loop: {err}")
+            return 0
+    except Exception as e:
+        logger.error(f"[{dut}] Exception in start_wlan_status_loop: {e}", exc_info=True)
         return 0
 
 
-def stop_wlan_status_loop(dut: str, user: str, pid: int):
+def stop_wlan_status_loop(dut: str, user: str = "root", pid: int):
     """
     Stops background wlan_status loop.
     """
@@ -204,7 +233,7 @@ def stop_wlan_status_loop(dut: str, user: str, pid: int):
 
 def start_background_command(
     dut: str,
-    user: str,
+    user: str = "root",
     cmd: str,
     remote_output_path: str,
     for_debug: bool = False
@@ -228,7 +257,7 @@ def start_background_command(
 
 def fetch_background_output(
     dut: str,
-    user: str,
+    user: str = "root",
     remote_output_path: str,
     local_output_path: str,
     for_debug: bool = False
