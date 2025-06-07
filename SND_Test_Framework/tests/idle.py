@@ -27,7 +27,7 @@ def run_test(dut: str, test_params: dict, remote_list: list, global_flags: dict,
     # Step 2: Attempt to associate
     join_success = False
     for attempt in range(1, 4):
-        rc, out, err = initiate_assoc_connect(dut, user, ssid, sec, pwd, for_debug=True, log_dir=log_dir)
+        rc, out, err = initiate_assoc_connect(dut, user, ssid, sec, pwd, for_debug=True)
         if rc == 0:
             logger.info(f"[IDLE] Association attempt {attempt} SUCCEEDED on {dut}")
             join_success = True
