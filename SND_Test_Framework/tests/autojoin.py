@@ -2,6 +2,7 @@ import logging
 import time
 from colored_print import print_step
 from utils.wlan_utils import initiate_assoc_connect, initiate_forgetNw, wifi_on, wifi_off
+from utils.common_utils import countdown
 
 logger = logging.getLogger("tests.autojoin")
 
@@ -16,13 +17,14 @@ def run_test(dut: str, test_params: dict, remote_list: list, global_flags: dict,
     user     = test_params.get("User", "root")
     rounds   = int(test_params.get("join_attempts", 5))
     interval = int(test_params.get("join_on_off_interval", 2))  # interval between off/on
+    log_dir = test_params.get("test_log_path", "logs")
 
     # Sync with other DUTs before beginning
     barrier.wait()
 
     # Initial association
     print_step(f"[{dut}] Initial association to {ssid}")
-    rc, out, err = initiate_assoc_connect(dut, user, ssid, sec, pwd, for_debug=True)
+    rc, out, err = initiate_assoc_connect(dut, user, ssid, sec, pwd, for_debug=True, log_dir=log_dir)
     if rc != 0:
         logger.error(f"[{dut}] Initial association FAILED: {err}")
         return
@@ -35,12 +37,12 @@ def run_test(dut: str, test_params: dict, remote_list: list, global_flags: dict,
         # Turn Wi-Fi OFF
         print_step(f"[{dut}] Turning Wi-Fi OFF")
         wifi_off(dut, user)
-        time.sleep(interval)
+        countdown(interval))
 
         # Turn Wi-Fi ON
         print_step(f"[{dut}] Turning Wi-Fi ON")
         wifi_on(dut, user)
-        time.sleep(interval)
+        countdown(interval))
 
         # Start timing for rejoin
         start_t = time.time()
