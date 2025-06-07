@@ -1,7 +1,7 @@
 
 import subprocess
 import logging
-from utils.common_utils import ssh_execute
+from common_utils import ssh_execute, get_timestamp
 
 logger = logging.getLogger("utils.wlan_firmware_utils")
 
