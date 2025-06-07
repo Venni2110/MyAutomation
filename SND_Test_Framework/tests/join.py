@@ -2,6 +2,7 @@ import logging
 import time
 from colored_print import print_step
 from utils.wlan_utils import initiate_assoc_connect, initiate_forgetNw
+from utils.common_utils import countdown
 
 logger = logging.getLogger("tests.join")
 
@@ -16,6 +17,7 @@ def run_test(dut: str, test_params: dict, remote_list: list, global_flags: dict,
     user     = test_params.get("User", "root")
     rounds   = int(test_params.get("join_attempts", 5))
     interval = int(test_params.get("join_on_off_interval", 2))  # in seconds
+    log_dir = test_params.get("test_log_path", "logs")
 
     # Barrier to sync all DUTs before beginning test
     barrier.wait()
@@ -41,7 +43,7 @@ def run_test(dut: str, test_params: dict, remote_list: list, global_flags: dict,
             logger.info(f"[JOIN] Round {i+1} SUCCEEDED on {dut} in {end_t - start_t:.2f}s")
 
         # Step 4: Wait interval before next round
-        time.sleep(interval)
+        countdown(interval))
 
     print_step(f"[{dut}] Join test complete.")
     logger.info(f"[{dut}] Join test completed successfully.")
