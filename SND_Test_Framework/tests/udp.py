@@ -4,7 +4,7 @@ from colored_print import print_step
 from utils.common_utils import (
     start_iperf_server, stop_iperf_server, start_iperf_client
 )
-from utils.wlan_utils import initiate_assoc_connect, initiate_forgetNw, disable_lmac_throttling
+from utils.wlan_utils import initiate_assoc_connect, initiate_forgetNw
 
 logger = logging.getLogger("tests.udp")
 
@@ -26,10 +26,11 @@ def run_test(dut: str, test_params: dict, remote_list: list, global_flags: dict,
     iperf_port = 5300 + int(dut.split('.')[-1]) % 100
 
     barrier.wait()
-
+    # Step 1: Clear saved networks
     print_step(f"[{dut}] Forgetting network before association")
     initiate_forgetNw(dut, user)
 
+    # Step 2: Attempt to Join network
     print_step(f"[{dut}] Attempting association to {ssid} (up to 3 retries)")
     join_success = False
     for attempt in range(1, 4):
@@ -50,10 +51,7 @@ def run_test(dut: str, test_params: dict, remote_list: list, global_flags: dict,
         print_step(f"[{dut}] ❌ Join failed — traffic skipped.")
         return
 
-    disable_lmac_throttling(dut, user)
-    logger.info(f"[{dut}] Association and LMAC disable complete")
-
-    # Run UDP iperf3 traffic
+    # Step 3: Run UDP iperf3 traffic
     if direction == "UL":
         print_step(f"[{dut}] UL: DUT is UDP server, remote is client")
         start_iperf_server(dut, user, iperf_port, log_dir, udp=True)
