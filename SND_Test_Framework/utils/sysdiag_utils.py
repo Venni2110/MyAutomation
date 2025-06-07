@@ -1,5 +1,5 @@
 import logging
-from .ssh_utils import ssh_execute
+from .common_utils import ssh_execute, get_timestamp
 
 logger = logging.getLogger("utils.sysdiag_utils")
 
