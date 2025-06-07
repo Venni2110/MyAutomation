@@ -1,4 +1,5 @@
 import logging
+from colored_print import print_step
 import time
 from utils.ssh_utils import associate_connection, disable_lmac_throttling, ssh_execute
 from utils.attenuator_utils import set_attenuation
@@ -6,6 +7,9 @@ from utils.attenuator_utils import set_attenuation
 logger = logging.getLogger("tests.rvr")
 
 def run_test(dut: str, test_params: dict, remote_list: list, global_flags: dict, barrier):
+    logger = logging.getLogger(__name__)
+    print_step("Running test...")
+    logger.info("Starting run_test...")
     ssid = test_params["ap_wifi_ssid"]
     pwd  = test_params["ap_wifi_pwd"]
     user = test_params.get("User", "root")
@@ -21,6 +25,8 @@ def run_test(dut: str, test_params: dict, remote_list: list, global_flags: dict,
     rc, out, err = associate_connection(dut, user, ssid, pwd, test_params.get("dut_wifi_interface", "wlan0"))
     if rc != 0:
         logger.error(f"[RVR] Association FAILED on {dut}: {err}")
+    print_step("Test execution complete.")
+    logger.info("Test execution complete.")
         return
     disable_lmac_throttling(dut, user)
 

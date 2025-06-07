@@ -1,10 +1,14 @@
 import logging
+from colored_print import print_step
 import time
 from utils.ssh_utils import associate_connection, clear_saved_networks
 
 logger = logging.getLogger("tests.autojoin")
 
 def run_test(dut: str, test_params: dict, remote_list: list, global_flags: dict, barrier):
+    logger = logging.getLogger(__name__)
+    print_step("Running test...")
+    logger.info("Starting run_test...")
     ssid = test_params["ap_wifi_ssid"]
     pwd  = test_params["ap_wifi_pwd"]
     user = test_params.get("User", "root")

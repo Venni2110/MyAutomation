@@ -129,7 +129,7 @@ def per_dut_worker(
     # 2.5) Remote servers (e.g. iperf3)
     remote_handles = []
     if traffic_type.upper() == "TCP" and remote_list:
-        rc, out, err = ssh_utils.ssh_execute(
+        rc, out, err = ssh_execute(
             remote_list[0], user, "iperf3 -s -D", remote_dirs[remote_list[0]]
         )
         if rc == 0:
@@ -224,7 +224,7 @@ def per_dut_worker(
     for handle, remote in remote_handles:
         if handle == "iperf3":
             try:
-                ssh_utils.ssh_execute(remote, user, "pkill iperf3", remote_dirs[remote])
+                ssh_execute(remote, user, "pkill iperf3", remote_dirs[remote])
                 logger.info(f"Stopped iperf3 server on remote {remote}.")
             except Exception as e:
                 logger.error(f"Exception stopping iperf3 on remote {remote}: {e}", exc_info=True)
