@@ -80,5 +80,5 @@ def run_test(dut: str, test_params: dict, remote_list: list, global_flags: dict,
     elif direction == "UL":
         stop_iperf_server(dut, user, log_dir)
 
-    print_step(f"[{dut}] ✅ TCP Join test complete")
-    logger.info(f"[{dut}] ✅ Join test completed successfully")
+    print_step(f"[{dut}] ✅ TCP test complete")
+    logger.info(f"[{dut}] ✅ TCP test completed successfully")
