@@ -1,4 +1,3 @@
-
 import argparse
 import sys
 import threading
@@ -22,7 +21,6 @@ from utils import (
 )
 from utils.common_utils import ssh_execute
 
-
 def per_dut_worker(
     dut: str,
     remote_list: list,
@@ -32,14 +30,18 @@ def per_dut_worker(
     sniffer_params: dict,
     barrier: threading.Barrier
 ):
+    # Create a dedicated logger for each DUT/test type
     logger = logging.getLogger(f"Worker.{test_params['Test_Type']}.{dut}")
+
+    # Extract necessary info from input
     test_name     = test_params["Test_Type"]
     traffic_type  = test_params["TrafficType"]
     user          = test_params.get("User", "root")
     base_log_folder = global_flags.get("test_log_folder", "logs")
 
+    # Create log directories for this DUT
     print_step(f"📁 [{dut}] Creating log folders")
-    dut_root       = os.path.join(base_log_folder, test_name, dut.replace(".", "_"))
+    dut_root        = os.path.join(base_log_folder, test_name, dut.replace(".", "_"))
     dut_sniffer_dir = os.path.join(dut_root, "sniffer")
     dut_tcpdump_dir = os.path.join(dut_root, "tcpdump")
     dut_sysdiag_dir = os.path.join(dut_root, "sysdiag")
@@ -48,14 +50,16 @@ def per_dut_worker(
     for d in [dut_sniffer_dir, dut_tcpdump_dir, dut_sysdiag_dir, dut_atten_dir, dut_common_dir]:
         os.makedirs(d, exist_ok=True)
 
+    # Prepare folders for remote devices
     remote_dirs = {}
     for remote in remote_list:
         rd = os.path.join(dut_root, "remote", remote.replace(".", "_"))
         os.makedirs(rd, exist_ok=True)
         remote_dirs[remote] = rd
 
-    print_step(f"🧼 [{dut}] Cleaning DUT logs and firmware logs")
-    logger.info(f"[{dut}] Cleaning logs and saved states")
+    # DUT cleanup step
+    print_step(f"🧼 [{dut}] Cleaning DUT logs and saved networks")
+    logger.info(f"[{dut}] Performing log erase and Wi-Fi reset")
     common_utils.erase_logs(dut, user)
     time.sleep(1)
     common_utils.clear_saved_networks(dut, user)
@@ -66,28 +70,31 @@ def per_dut_worker(
     time.sleep(2)
     common_utils.wifi_on(dut, user)
     time.sleep(1)
-    wlan_firmware_utils.clean_firmware_logs(dut, user)
-    time.sleep(1)
-    wlan_firmware_utils.start_firmware_log(dut, user)
-    logger.info(f"[{dut}] DUT cleanup and firmware log started.")
 
-    print_step(f"📡 [{dut}] Starting logs (Attenuator, Sniffer, tcpdump)")
+    # Clean Atlas firmware logs but DO NOT start logging yet
+    wlan_firmware_utils.clean_firmware_logs(dut, user)
+
+    # Start logging utilities (attenuator, sniffer, tcpdump, sysdiag)
+    print_step(f"📡 [{dut}] Starting always-on logs (Attenuator, Sniffer, WlanFW, sysdiag, tcpdump)")
+
+    # 🚨 Now start Attenuator setup
     try:
         if global_flags.get("enable_attenuator", False):
             start_attn = int(test_params.get("start_attn_1", 0))
             attenuator_utils.set_attenuation(start_attn)
             attn_was_set = True
-            logger.info(f"[{dut}] Attenuator set to {start_attn} dB.")
+            logger.info(f"[{dut}] Attenuator set to {start_attn} dB")
         else:
             attn_was_set = False
-            logger.info(f"[{dut}] Skipping attenuator.")
+            logger.info(f"[{dut}] Attenuator disabled in global config")
     except Exception as e:
         attn_was_set = False
-        logger.error(f"[{dut}] Attenuator exception: {e}", exc_info=True)
+        logger.error(f"[{dut}] Attenuator setup failed: {e}", exc_info=True)
 
+    # 🚨 Now start Sniffer setup
+    sniffer_processes = []
     raw_ch_str = test_params.get("sniffer_channels", "")
     requested_channels = [ch.strip() for ch in raw_ch_str.split(",") if ch.strip()]
-    sniffer_processes = []
     if global_flags.get("enable_sniffer", False) and requested_channels:
         for i, ch in enumerate(requested_channels):
             if i < len(sniffer_devs):
@@ -97,46 +104,44 @@ def per_dut_worker(
                     sn_info["ip"], sn_info["user"], sn_info["ifname"], freq_info, dut_sniffer_dir
                 )
                 sniffer_processes.append((sn_info, pid_file))
-                logger.info(f"[{dut}] Started sniffer '{sn_info['name']}' on channel {ch}")
+                logger.info(f"[{dut}] Sniffer '{sn_info['name']}' started on channel {ch}")
             else:
-                logger.error(f"[{dut}] No sniffer available for channel {ch}")
+                logger.error(f"[{dut}] No available sniffer for channel {ch}")
     else:
-        logger.info(f"[{dut}] Skipping sniffer.")
+        logger.info(f"[{dut}] Sniffer disabled or no channels requested")
 
-    if global_flags.get("enable_tcpdump", False):
-        iface = test_params.get("dut_wifi_interface", "wlan0")
-        tcpdump_handle = tcpdump_utils.start_tcpdump(dut, user, iface, dut_tcpdump_dir)
-        logger.info(f"[{dut}] Started tcpdump.")
-    else:
-        tcpdump_handle = None
-        logger.info(f"[{dut}] Skipping tcpdump.")
-
+    # 🚨 Now start Sysdiagnose/logarchive setup
+    print_step(f"📝 [{dut}] Starting Sysdiagnose log collection")
     sys_mode = str(global_flags.get("get_sysdiagnose", "")).lower()
     if sys_mode == "sysdiagnose":
         try:
             sysdiag_utils.run_sysdiagnose(dut, user, dut_sysdiag_dir)
-            logger.info(f"[{dut}] Ran initial sysdiagnose.")
+            logger.info(f"[{dut}] Initial sysdiagnose complete")
         except Exception as e:
-            logger.error(f"[{dut}] Initial sysdiagnose exception: {e}", exc_info=True)
+            logger.error(f"[{dut}] Initial sysdiagnose failed: {e}", exc_info=True)
     elif sys_mode == "logarchive":
         try:
             sysdiag_utils.run_logarchive(dut, user, dut_sysdiag_dir)
-            logger.info(f"[{dut}] Ran initial logarchive.")
+            logger.info(f"[{dut}] Initial logarchive complete")
         except Exception as e:
-            logger.error(f"[{dut}] Initial logarchive exception: {e}", exc_info=True)
+            logger.error(f"[{dut}] Initial logarchive failed: {e}", exc_info=True)
+
+    # 🚨 Now start ATLAS WLAN firmware setup
+    print_step(f"📝 [{dut}] Starting Atlas firmware log collection")
+    wlan_firmware_utils.start_firmware_log(dut, user)
+    logger.info(f"[{dut}] Firmware logging started")
+
+    # 🚨 Now start TCPDump setup
+    iface = test_params.get("dut_wifi_interface", "wlan0")
+    if global_flags.get("enable_tcpdump", False):
+        tcpdump_handle = tcpdump_utils.start_tcpdump(dut, user, iface, dut_tcpdump_dir)
+        logger.info(f"[{dut}] TCPDump started")
     else:
-        logger.info("Skipping initial sysdiag/logarchive (global flag).")
-
-    remote_handles = []
-    if traffic_type.upper() == "TCP" and remote_list:
-        rc, out, err = ssh_execute(remote_list[0], user, "iperf3 -s -D", remote_dirs[remote_list[0]])
-        if rc == 0:
-            remote_handles.append(("iperf3", remote_list[0]))
-            logger.info(f"[{dut}] Started iperf3 server on remote {remote_list[0]}")
-        else:
-            logger.error(f"[{dut}] Failed to start iperf3 on remote {remote_list[0]}: {err}")
-
-    print_step(f"🚀 [{dut}] Running test logic: {traffic_type}")
+        tcpdump_handle = None
+        logger.info(f"[{dut}] TCPDump disabled in config")
+    
+    # Begin test execution
+    print_step(f"🚀 [{dut}] Running test logic for traffic type: {traffic_type}")
     test_exception = None
     try:
         mod_name = traffic_type.lower()
@@ -144,73 +149,75 @@ def per_dut_worker(
         test_module.run_test(dut, test_params, remote_list, global_flags, barrier)
     except Exception as e:
         test_exception = e
-        logger.error(f"[{dut}] Exception in test logic: {e}", exc_info=True)
+        logger.error(f"[{dut}] Exception during test: {e}", exc_info=True)
 
-    print_step(f"🧹 [{dut}] Collecting logs and cleaning up")
+    # Cleanup logging processes
+    print_step(f"🧹 [{dut}] Stopping logs and collecting results")
+
+    # Stop tcpdump
     if tcpdump_handle:
         try:
             tcpdump_utils.stop_tcpdump(dut, user, tcpdump_handle)
-            logger.info(f"[{dut}] Stopped tcpdump.")
+            logger.info(f"[{dut}] TCPDump stopped")
         except Exception as e:
-            logger.error(f"[{dut}] Exception stopping tcpdump: {e}", exc_info=True)
+            logger.error(f"[{dut}] TCPDump stop error: {e}", exc_info=True)
 
+    # Stop sniffers
     for sn_info, pid in sniffer_processes:
         try:
             sniffer_utils.stop_sniffer(sn_info["ip"], sn_info["user"], pid)
-            logger.info(f"[{dut}] Stopped sniffer '{sn_info['name']}'.")
+            logger.info(f"[{dut}] Sniffer '{sn_info['name']}' stopped")
         except Exception as e:
-            logger.error(f"[{dut}] Exception stopping sniffer '{sn_info['name']}': {e}", exc_info=True)
+            logger.error(f"[{dut}] Sniffer stop error: {e}", exc_info=True)
 
+    # Final sysdiagnose/logarchive
     if sys_mode == "sysdiagnose":
         try:
             sysdiag_utils.run_sysdiagnose(dut, user, dut_sysdiag_dir)
-            logger.info(f"[{dut}] Ran final sysdiagnose.")
+            logger.info(f"[{dut}] Final sysdiagnose complete")
         except Exception as e:
-            logger.error(f"[{dut}] Exception final sysdiagnose: {e}", exc_info=True)
+            logger.error(f"[{dut}] Final sysdiagnose failed: {e}", exc_info=True)
     elif sys_mode == "logarchive":
         try:
             sysdiag_utils.run_logarchive(dut, user, dut_sysdiag_dir)
-            logger.info(f"[{dut}] Ran final logarchive.")
+            logger.info(f"[{dut}] Final logarchive complete")
         except Exception as e:
-            logger.error(f"[{dut}] Exception final logarchive: {e}", exc_info=True)
+            logger.error(f"[{dut}] Final logarchive failed: {e}", exc_info=True)
 
+    # Stop firmware logging and download logs
     wlan_firmware_utils.stop_and_pull_firmware_log(dut, user, dut_common_dir)
-    logger.info(f"[{dut}] Pulled Atlas firmware logs.")
+    logger.info(f"[{dut}] Firmware logs downloaded")
 
+    # Reset attenuator
     if attn_was_set and global_flags.get("enable_attenuator", False):
         try:
             attenuator_utils.set_attenuation(0)
-            logger.info(f"[{dut}] Reset attenuator to 0 dB.")
+            logger.info(f"[{dut}] Attenuator reset to 0 dB")
         except Exception as e:
-            logger.error(f"[{dut}] Exception resetting attenuator: {e}", exc_info=True)
+            logger.error(f"[{dut}] Attenuator reset error: {e}", exc_info=True)
 
-    for handle, remote in remote_handles:
-        if handle == "iperf3":
-            try:
-                ssh_execute(remote, user, "pkill iperf3", remote_dirs[remote])
-                logger.info(f"[{dut}] Stopped iperf3 server on remote {remote}.")
-            except Exception as e:
-                logger.error(f"[{dut}] Exception stopping iperf3 on remote {remote}: {e}", exc_info=True)
-
+    # Archive test logs
     try:
         tar_path = f"{dut_root}.tar.gz"
         subprocess.call(f"tar czf {tar_path} -C {base_log_folder} {test_name}/{dut.replace('.', '_')}", shell=True)
-        logger.info(f"[{dut}] Archived logs to {tar_path}")
+        logger.info(f"[{dut}] Logs archived to {tar_path}")
     except Exception as e:
-        logger.error(f"[{dut}] Exception archiving logs: {e}", exc_info=True)
+        logger.error(f"[{dut}] Archive failed: {e}", exc_info=True)
 
+    # Final result
     if test_exception:
-        logger.error(f"[{dut}] ❌ Test FAILED.")
-        print_step(f"[{dut}] ❌ Test FAILED.")
+        logger.error(f"[{dut}] ❌ Test FAILED")
+        print_step(f"[{dut}] ❌ Test FAILED")
     else:
-        logger.info(f"[{dut}] ✅ Test SUCCESSFUL.")
-        print_step(f"[{dut}] ✅ Test SUCCESSFUL.")
+        logger.info(f"[{dut}] ✅ Test SUCCESSFUL")
+        print_step(f"[{dut}] ✅ Test SUCCESSFUL")
 
 
+# Main function that launches CLI → reads Excel → starts threads
 def main():
-    print_step("Parsing command-line arguments...")
+    print_step("Parsing CLI arguments")
     logger = setup_logging(log_file="testExecOutput.log", level=logging.INFO)
-    logger.info("Started InfraFramework CLI parsing")
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--excel_path", "-e", required=True, help="Path to Configurations_updated.xlsx")
     parser.add_argument("--tests_to_run", "-t", nargs="*", default=None,
@@ -218,41 +225,33 @@ def main():
     args = parser.parse_args()
 
     print_info("InfraFramework starting...")
-    logger.info("Logger initialized and output redirected to testExecOutput.log")
+    logger.info("Logger setup complete")
 
-    print_step("Loading execution configuration and test definitions from Excel...")
-    logger.info("Loading Excel configuration from %s", args.excel_path)
+    print_step("Reading Excel configuration")
     global_flags     = load_execution_config(args.excel_path)
     sniffer_devs     = load_sniffer_config(args.excel_path)
     sniffer_params   = load_sniffer_parameters(args.excel_path)
     test_df          = load_test_config(args.excel_path)
-    logger.info("Excel sheets loaded successfully")
 
-    print_step("Filtering out tests marked as 'Skip'...")
+    print_step("Filtering valid tests to run...")
     to_run_df = test_df[test_df["Skipped_Execution"].str.strip().str.lower() != "skip"]
     if args.tests_to_run:
         to_run_df = to_run_df[to_run_df["Test_Type"].isin(args.tests_to_run)]
-        logger.info("Filtered test list to: %s", args.tests_to_run)
+        logger.info("User-specified test types: %s", args.tests_to_run)
 
     if to_run_df.empty:
         print_error("No tests to run.")
-        logger.error("No runnable test rows after filtering.")
+        logger.error("Nothing to execute after filtering.")
         sys.exit(1)
 
-    print_step("Starting DUT threads for each test...")
+    # Threading for each DUT/test combo
+    print_step("Launching DUT threads...")
     all_threads = []
     for _, row in to_run_df.iterrows():
-        raw_dut_str = row["dut"]
-        dut_list = [d.strip() for d in str(raw_dut_str).split(",") if d.strip()]
-        logger.info("Launching test: %s on DUT(s): %s", row["Test_Type"], ", ".join(dut_list))
+        dut_list = [d.strip() for d in str(row["dut"]).split(",") if d.strip()]
+        remote_list = [r.strip() for r in str(row.get("controller_ip", "")).split(",") if r.strip()]
 
-        remote_list = []
-        if "controller_ip" in row and pd.notna(row["controller_ip"]):
-            remote_list = [r.strip() for r in str(row["controller_ip"]).split(",") if r.strip()]
-            logger.info("Detected remote devices: %s", ", ".join(remote_list))
-
-        barrier = threading.Barrier(len(dut_list) if dut_list else 1)
-
+        barrier = threading.Barrier(len(dut_list))
         for dut in dut_list:
             t = threading.Thread(
                 target=per_dut_worker,
@@ -260,14 +259,13 @@ def main():
             )
             t.start()
             all_threads.append(t)
-            logger.info("Started thread for DUT: %s", dut)
 
-    print_step("Waiting for all DUTs threads to complete...")
+    # Wait for all DUT threads to finish
+    print_step("Waiting for all DUT threads to complete...")
     for t in all_threads:
         t.join()
 
-    print_info("All DUT threads completed. Check testExecOutput.log file.")
-    logger.info("All test threads completed.")
+    print_info("✅ All test threads complete. See logs for details.")
 
 if __name__ == "__main__":
     main()
